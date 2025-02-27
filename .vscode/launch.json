@@ -1,0 +1,45 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'walldl'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=walldl",
+                    "--package=walldl"
+                ],
+                "filter": {
+                    "name": "walldl",
+                    "kind": "bin"
+                }
+            },
+            "args": ["https://ultralytics.com/images/bus.jpg", "-o"],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'walldl'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=walldl",
+                    "--package=walldl"
+                ],
+                "filter": {
+                    "name": "walldl",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}

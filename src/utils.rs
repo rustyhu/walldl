@@ -6,7 +6,6 @@ use tokio::time::Instant;
 use tokio::{fs::OpenOptions, io::AsyncWriteExt};
 
 const PROXY_URL: &str = "http://192.168.144.1:7890"; // consider the real
-const CHUNK_SIZE: u64 = 1024 * 1024; // 1MB per chunk - used for actual download chunking if any, not speed test
 const SPEED_TEST_CHUNK_SIZE: u64 = 200 * 1024; // 200KB for speed test
 const WAIT_LIMIT: u64 = 10;
 
@@ -37,7 +36,8 @@ async fn test_speed(client: &Client, url: &str) -> Result<f64> {
     Ok(calculate_speed_mbps(bytes.len() as f64, duration_secs))
 }
 
-async fn choose(url: &str) -> Result<bool> { // Original signature
+async fn choose(url: &str) -> Result<bool> {
+    // Original signature
     println!("Testing speed... wait...");
 
     use std::time::Duration;
@@ -67,13 +67,16 @@ async fn choose(url: &str) -> Result<bool> { // Original signature
 
     // If both tests failed or yielded 0.0 speed, return an error.
     if direct_speed <= 0.0 && proxy_speed <= 0.0 {
-        return Err(anyhow::anyhow!("Both direct and proxy speed tests failed or yielded no speed."));
+        return Err(anyhow::anyhow!(
+            "Both direct and proxy speed tests failed or yielded no speed."
+        ));
     }
 
     Ok(proxy_speed > direct_speed) // Use proxy only if strictly faster
 }
 
-pub async fn download_file(url: &str, path: &str) -> Result<()> { // Original signature
+pub async fn download_file(url: &str, path: &str) -> Result<()> {
+    // Original signature
     let use_proxy = match choose(url).await {
         Ok(should_use_proxy) => {
             println!(
@@ -83,12 +86,16 @@ pub async fn download_file(url: &str, path: &str) -> Result<()> { // Original si
             should_use_proxy
         }
         Err(e) => {
-            eprintln!("[download_file]Speed test error: {}. Defaulting to proxy download.", e);
+            eprintln!(
+                "[download_file]Speed test error: {}. Defaulting to proxy download.",
+                e
+            );
             true // Default to using proxy if choose fails
         }
     };
 
-    println!( // This message now confirms the actual path taken
+    println!(
+        // This message now confirms the actual path taken
         "Attempting download via {}...",
         if use_proxy {
             "proxy"

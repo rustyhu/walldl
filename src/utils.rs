@@ -5,9 +5,26 @@ use reqwest::{Client, Proxy};
 use tokio::time::Instant;
 use tokio::{fs::OpenOptions, io::AsyncWriteExt};
 
-const PROXY_URL: &str = "http://192.168.144.1:7890"; // consider the real
 const SPEED_TEST_CHUNK_SIZE: u64 = 200 * 1024; // 200KB for speed test
 const WAIT_LIMIT: u64 = 10;
+
+fn get_proxy_url() -> String {
+    if let Ok(url) = std::fs::read_to_string("proxy.txt") {
+        let p = url.trim();
+        if !p.is_empty() {
+            return p.to_string();
+        }
+    }
+
+    if let Ok(url) = std::env::var("PROXY") {
+        let p = url.trim();
+        if !p.is_empty() {
+            return p.to_string();
+        }
+    }
+
+    "http://127.0.0.1:8080".to_string()
+}
 
 // Helper function for speed calculation
 fn calculate_speed_mbps(bytes_len_f64: f64, duration_secs_f64: f64) -> f64 {
@@ -36,8 +53,7 @@ async fn test_speed(client: &Client, url: &str) -> Result<f64> {
     Ok(calculate_speed_mbps(bytes.len() as f64, duration_secs))
 }
 
-async fn choose(url: &str) -> Result<bool> {
-    // Original signature
+async fn choose(url: &str, proxy_url: &str) -> Result<bool> {
     println!("Testing speed... wait...");
 
     use std::time::Duration;
@@ -46,7 +62,7 @@ async fn choose(url: &str) -> Result<bool> {
         .build()
         .context("Failed to build direct client")?;
     let client_proxy = Client::builder()
-        .proxy(Proxy::all(PROXY_URL).context("Invalid proxy URL")?) // Use hardcoded PROXY_URL
+        .proxy(Proxy::all(proxy_url).context("Invalid proxy URL")?)
         .timeout(Duration::from_secs(WAIT_LIMIT))
         .build()
         .context("Failed to build proxy client")?;
@@ -65,7 +81,6 @@ async fn choose(url: &str) -> Result<bool> {
         direct_speed, proxy_speed
     );
 
-    // If both tests failed or yielded 0.0 speed, return an error.
     if direct_speed <= 0.0 && proxy_speed <= 0.0 {
         return Err(anyhow::anyhow!(
             "Both direct and proxy speed tests failed or yielded no speed."
@@ -76,8 +91,8 @@ async fn choose(url: &str) -> Result<bool> {
 }
 
 pub async fn download_file(url: &str, path: &str) -> Result<()> {
-    // Original signature
-    let use_proxy = match choose(url).await {
+    let proxy_url = get_proxy_url();
+    let use_proxy = match choose(url, &proxy_url).await {
         Ok(should_use_proxy) => {
             println!(
                 "[download_file]Choose decided: Will use {} connection.",
@@ -106,7 +121,7 @@ pub async fn download_file(url: &str, path: &str) -> Result<()> {
 
     let client = if use_proxy {
         Client::builder()
-            .proxy(Proxy::all(PROXY_URL).context("Invalid proxy URL for download")?) // Use Proxy::all
+            .proxy(Proxy::all(&proxy_url).context("Invalid proxy URL for download")?)
             .build()?
     } else {
         Client::new()

@@ -21,8 +21,8 @@ async fn main() -> Result<()> {
     };
 
     match download_file(&url, &path).await {
-        Ok(_) => println!("[main]Done!"),
-        Err(e) => eprintln!("[main]Failed to download {url}: {e}"),
+        Ok(_) => println!("Done!"),
+        Err(e) => eprintln!("Failed to download {url}: {e}"),
     }
 
     Ok(())

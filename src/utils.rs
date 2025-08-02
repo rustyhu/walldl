@@ -92,19 +92,17 @@ async fn choose(url: &str, proxy_url: &str) -> Result<bool> {
 
 pub async fn download_file(url: &str, path: &str) -> Result<()> {
     let proxy_url = get_proxy_url();
+    println!("Using PROXY URL: {proxy_url}");
     let use_proxy = match choose(url, &proxy_url).await {
         Ok(should_use_proxy) => {
             println!(
-                "[download_file]Choose decided: Will use {} connection.",
+                "Decide to use {} connection.",
                 if should_use_proxy { "proxy" } else { "direct" }
             );
             should_use_proxy
         }
         Err(e) => {
-            eprintln!(
-                "[download_file]Speed test error: {}. Defaulting to proxy download.",
-                e
-            );
+            eprintln!("Speed test error: {}. Defaulting to proxy download.", e);
             true // Default to using proxy if choose fails
         }
     };

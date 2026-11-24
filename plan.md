@@ -2,10 +2,10 @@
 
 ## Scope
 
-- Always measure direct and proxy routes to select the faster usable connection.
+- Follow [design.md](design.md): proxy first for files up to 4 MiB; compare route speeds for larger files or unknown sizes.
 - Support HTTP/HTTPS and SOCKS5 proxies for slow or blocked destinations.
 - Keep single-stream downloads; no concurrent or segmented downloading currently.
-- Use the only successful route; if both probes fail, report both errors and stop.
+- Use the only usable route; if both routes fail, report both errors and stop.
 
 ## Improvements
 
@@ -16,13 +16,13 @@
 - Configuration: preserve `proxy.txt` > `PROXY` > localhost default; report invalid or unreadable configuration.
 - Clients: reuse the selected client; separate connection timeout, probe deadline, and download idle timeout.
 - Probes: bound time and bytes, validate partial responses, and handle ignored Range, small files, and empty responses.
-- Selection: choose the faster measured route without a preference threshold; use direct only for exact ties.
-- Reporting: show measurements and selection reasons; do not silently switch routes mid-download.
+- Selection: reuse the proxy response for known small files without a speed probe; otherwise choose the faster measured route, using direct for exact ties.
+- Reporting: show route decisions and failures; never silently switch routes or append data from an unvalidated response.
 - Dependencies: retain the current stack, keep `stream`, enable `socks`, remove unused `json`, and narrow Tokio features.
 
 ## Next feature
 
-- Add single-stream resume using HTTP Range requests, preserving partial downloads for later continuation.
+- Add single-stream resume using HTTP Range requests, with a retention policy for resumable partial downloads.
 - Validate the remote resource and range response before appending; handle changed resources and servers that ignore or reject Range without corrupting the output.
 
 ## Validation and order

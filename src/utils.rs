@@ -11,9 +11,21 @@ use tokio::{
 };
 
 const PROBE_BYTES: u64 = 512 * 1024;
+const SMALL_FILE_BYTES: u64 = 4 * 1024 * 1024;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[derive(Debug)]
+struct RouteFailure;
+
+impl std::fmt::Display for RouteFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Download route failed")
+    }
+}
+
+impl std::error::Error for RouteFailure {}
 
 async fn get_proxy_url() -> Result<Url> {
     let file = match fs::read_to_string("proxy.txt").await {
@@ -125,7 +137,15 @@ async fn probe(client: &Client, url: &Url, budget: Duration) -> Result<Measureme
             .context("Probe retry timed out")?
             .map_err(reqwest::Error::without_url)?;
     }
-    response = response
+    measure_response(response, started, deadline).await
+}
+
+async fn measure_response(
+    response: Response,
+    started: Instant,
+    deadline: Instant,
+) -> Result<Measurement> {
+    let mut response = response
         .error_for_status()
         .map_err(reqwest::Error::without_url)?;
     let expected = partial_length(&response)?;
@@ -182,11 +202,17 @@ fn select_proxy(direct: &Result<Measurement>, proxy: &Result<Measurement>) -> Re
     }
 }
 
-async fn choose<'a>(direct: &'a Client, proxy: &'a Client, url: &Url) -> Result<&'a Client> {
+async fn choose<'a>(
+    direct: &'a Client,
+    proxy: &'a Client,
+    url: &Url,
+    proxy_response: Response,
+    proxy_started: Instant,
+) -> Result<&'a Client> {
     println!("Testing direct and proxy routes...");
     let (direct_result, proxy_result) = tokio::join!(
         probe(direct, url, PROBE_TIMEOUT),
-        probe(proxy, url, PROBE_TIMEOUT)
+        measure_response(proxy_response, proxy_started, proxy_started + PROBE_TIMEOUT)
     );
     for (name, result) in [("Direct", &direct_result), ("Proxy", &proxy_result)] {
         match result {
@@ -216,8 +242,8 @@ async fn choose<'a>(direct: &'a Client, proxy: &'a Client, url: &Url) -> Result<
     Ok(if use_proxy { proxy } else { direct })
 }
 
-async fn download(client: &Client, url: &Url, path: &Path) -> Result<()> {
-    let mut response = timeout(IDLE_TIMEOUT, client.get(url.clone()).send())
+async fn request_download(client: &Client, url: &Url, wait: Duration) -> Result<Response> {
+    let response = timeout(wait, client.get(url.clone()).send())
         .await
         .context("Timed out waiting for download response")?
         .map_err(reqwest::Error::without_url)?
@@ -228,6 +254,17 @@ async fn download(client: &Client, url: &Url, path: &Path) -> Result<()> {
         "Expected a full download response, received {}",
         response.status()
     );
+    Ok(response)
+}
+
+async fn download(client: &Client, url: &Url, path: &Path) -> Result<()> {
+    let response = request_download(client, url, IDLE_TIMEOUT)
+        .await
+        .context(RouteFailure)?;
+    save_response(response, path).await
+}
+
+async fn save_response(mut response: Response, path: &Path) -> Result<()> {
     let size = response.content_length();
     let pb = match size {
         Some(size) => ProgressBar::new(size),
@@ -257,8 +294,10 @@ async fn download(client: &Client, url: &Url, path: &Path) -> Result<()> {
         let mut downloaded = 0;
         while let Some(chunk) = timeout(IDLE_TIMEOUT, response.chunk())
             .await
-            .context("Download stalled")?
-            .map_err(reqwest::Error::without_url)?
+            .context("Download stalled")
+            .context(RouteFailure)?
+            .map_err(reqwest::Error::without_url)
+            .context(RouteFailure)?
         {
             writer
                 .write_all(&chunk)
@@ -268,7 +307,9 @@ async fn download(client: &Client, url: &Url, path: &Path) -> Result<()> {
             pb.set_position(downloaded);
         }
         if let Some(size) = size {
-            ensure!(downloaded == size, "Incomplete download");
+            if downloaded != size {
+                return Err(anyhow!("Incomplete download")).context(RouteFailure);
+            }
         }
         writer.flush().await.context("Failed to flush output")?;
         writer
@@ -296,11 +337,44 @@ async fn download(client: &Client, url: &Url, path: &Path) -> Result<()> {
     Ok(())
 }
 
+async fn fallback_to_direct(
+    direct: &Client,
+    url: &Url,
+    path: &Path,
+    proxy_error: anyhow::Error,
+) -> Result<()> {
+    eprintln!("Proxy route failed: {proxy_error:#}");
+    println!("Selected direct (proxy failed); restarting download.");
+    match download(direct, url, path).await {
+        Err(direct_error) if direct_error.is::<RouteFailure>() => {
+            bail!("Both routes failed; proxy: {proxy_error:#}; direct: {direct_error:#}")
+        }
+        result => result,
+    }
+}
+
 pub async fn download_file(url: &Url, path: &Path) -> Result<()> {
     let proxy_url = get_proxy_url().await?;
     let direct = build_client(None)?;
     let proxy = build_client(Some(&proxy_url))?;
-    let client = choose(&direct, &proxy, url).await?;
+    let started = Instant::now();
+    let response = match request_download(&proxy, url, PROBE_TIMEOUT).await {
+        Ok(response) => response,
+        Err(error) => return fallback_to_direct(&direct, url, path, error).await,
+    };
+    if response
+        .content_length()
+        .is_some_and(|size| size <= SMALL_FILE_BYTES)
+    {
+        println!("Selected proxy (file is at most 4 MiB; skipping speed comparison).");
+        return match save_response(response, path).await {
+            Err(error) if error.is::<RouteFailure>() => {
+                fallback_to_direct(&direct, url, path, error).await
+            }
+            result => result,
+        };
+    }
+    let client = choose(&direct, &proxy, url, response, started).await?;
     download(client, url, path).await
 }
 

@@ -16,6 +16,8 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
+const FALLBACK_LOCAL_PROXY: &str = "http://127.0.0.1:7890";
+
 #[derive(Debug)]
 struct RouteFailure;
 
@@ -36,11 +38,27 @@ async fn get_proxy_url() -> Result<Url> {
     let value = if !file.trim().is_empty() {
         file
     } else {
-        match std::env::var("PROXY") {
-            Ok(value) if !value.trim().is_empty() => value,
-            Ok(_) | Err(std::env::VarError::NotPresent) => "http://127.0.0.1:8080".into(),
-            Err(_) => bail!("PROXY must be valid UTF-8"),
+        let mut foundproxy = None;
+        for name in [
+            "HTTPS_PROXY",
+            "https_proxy",
+            "HTTP_PROXY",
+            "http_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+            "PROXY",
+            "proxy",
+        ] {
+            match std::env::var(name) {
+                Ok(value) if !value.trim().is_empty() => {
+                    foundproxy = Some(value);
+                    break;
+                }
+                Ok(_) | Err(std::env::VarError::NotPresent) => {}
+                Err(_) => bail!("{name} must be valid UTF-8"),
+            }
         }
+        foundproxy.unwrap_or_else(|| FALLBACK_LOCAL_PROXY.into())
     };
     let url = Url::parse(value.trim()).context("Invalid proxy URL")?;
     ensure!(
@@ -355,6 +373,7 @@ async fn fallback_to_direct(
 
 pub async fn download_file(url: &Url, path: &Path) -> Result<()> {
     let proxy_url = get_proxy_url().await?;
+    println!("Found proxy: {proxy_url}");
     let direct = build_client(None)?;
     let proxy = build_client(Some(&proxy_url))?;
     let started = Instant::now();
